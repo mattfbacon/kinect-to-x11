@@ -1,0 +1,2 @@
+[workspace]
+members = ["kinect-to-x11", "freenect2", "freenect2-sys"]

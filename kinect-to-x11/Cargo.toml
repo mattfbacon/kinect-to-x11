@@ -1,0 +1,9 @@
+[package]
+edition = "2021"
+name = "kinect-to-x11"
+version = "0.1.0"
+
+[dependencies]
+freenect2 = { path = "../freenect2" }
+log = "0.4"
+simplelog = "0.12"
