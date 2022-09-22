@@ -103,7 +103,7 @@ struct ShimFrameListener : libfreenect2::FrameListener {
 	void* user_data;
 	void (*drop_user_data)(void*);
 
-	ShimFrameListener(Fn2FrameCallback const callback, void* const user_data, void (*const drop_user_data)(void*)) : callback(callback), user_data(user_data) {}
+	ShimFrameListener(Fn2FrameCallback const callback, void* const user_data, void (*const drop_user_data)(void*)) : callback(callback), user_data(user_data), drop_user_data(drop_user_data) {}
 
 	virtual bool onNewFrame(libfreenect2::Frame::Type const type, libfreenect2::Frame* const frame) override {
 		callback(user_data, to_ours(frame), to_ours(type));
@@ -277,14 +277,19 @@ struct Logger : libfreenect2::Logger {
 		switch (level) {
 			case libfreenect2::Logger::Level::Error:
 				our_level = Fn2LogLevel::Error;
+				break;
 			case libfreenect2::Logger::Level::Warning:
 				our_level = Fn2LogLevel::Warning;
+				break;
 			case libfreenect2::Logger::Level::Info:
 				our_level = Fn2LogLevel::Info;
+				break;
 			case libfreenect2::Logger::Level::Debug:
 				our_level = Fn2LogLevel::Debug;
+				break;
 			case libfreenect2::Logger::Level::None:
 				our_level = Fn2LogLevel::None;
+				break;
 		}
 
 		(vtable.log)(user_data, our_level, borrow_string(message));
