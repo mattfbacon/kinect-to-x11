@@ -7,3 +7,5 @@ version = "0.1.0"
 freenect2 = { path = "../freenect2" }
 log = "0.4"
 simplelog = "0.12"
+ctrlc = "3"
+image = "0.24"

@@ -74,7 +74,7 @@ static inline Fn2FrameFormat to_ours(libfreenect2::Frame::Format const lib) {
 		case libfreenect2::Frame::Format::Raw:
 			return Raw;
 		case libfreenect2::Frame::Format::Float:
-			return Bgrx;
+			return Float;
 		case libfreenect2::Frame::Format::BGRX:
 			return Bgrx;
 		case libfreenect2::Frame::Format::RGBX:

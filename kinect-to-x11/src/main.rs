@@ -20,6 +20,12 @@
 
 use freenect2::Context;
 
+#[derive(Debug)]
+enum Message {
+    Frame(freenect2::Frame, freenect2::FrameType),
+    Stop,
+}
+
 fn main() {
 	simplelog::TermLogger::init(
 		log::LevelFilter::Trace,
@@ -30,11 +36,30 @@ fn main() {
 	.unwrap();
 
 	let mut ctx = Context::new();
-	if let Some(device) = ctx.open_default_device() {
-		log::info!(
-			"there is a device. its serial number is {:?}",
-			device.serial_number()
-		);
+	if let Some(mut device) = ctx.open_default_device() {
+        let (sender, recv) = std::sync::mpsc::sync_channel(4);
+
+        ctrlc::set_handler({
+            let sender = sender.clone();
+            move || {
+                sender.send(Message::Stop).unwrap();
+            }
+        }).unwrap();
+
+        device.set_frame_listener(move |frame, ty| {
+            let _ = sender.send(Message::Frame(frame, ty));
+        });
+        device.start().unwrap();
+        while let Ok(message) = recv.recv() {
+            match message {
+                Message::Frame(frame, ty) => {
+                    if ty == FrameType::Color {
+                        let mut image = image::RgbImage::new(
+                    }
+                }
+                Message::Stop => break,
+            }
+        }
 	} else {
 		log::error!("no devices available");
 	}
