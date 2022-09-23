@@ -81,6 +81,20 @@ impl Frame {
 		&self.data
 	}
 
+	/// The data itself, mutably.
+	///
+	/// It will be aligned to at least an 8-byte boundary.
+	#[must_use]
+	pub fn data_mut(&mut self) -> &mut [u8] {
+		&mut self.data
+	}
+
+	/// Consume the frame and return the owned data.
+	#[must_use]
+	pub fn into_data(self) -> Box<[u8]> {
+		self.data
+	}
+
 	/// In units of 100 microseconds.
 	#[must_use]
 	pub fn timestamp(&self) -> u32 {
@@ -119,7 +133,7 @@ impl Frame {
 }
 
 /// The possible image formats of a frame's data.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
 	/// 4 bytes of B, G, R, and unused per pixel.
 	Bgrx,
@@ -136,7 +150,7 @@ pub enum Format {
 }
 
 /// Error returned when converting from unsafe equivalent if the data represents an invalid variant.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnknownFormat;
 
 impl std::fmt::Display for UnknownFormat {
@@ -164,7 +178,7 @@ impl TryFrom<sys::Fn2FrameFormat> for Format {
 }
 
 /// Error returned when converting from unsafe equivalent if the data represents an invalid variant.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnknownType;
 
 impl std::fmt::Display for UnknownType {
@@ -176,7 +190,7 @@ impl std::fmt::Display for UnknownType {
 impl std::error::Error for UnknownType {}
 
 /// The source of a frame.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
 	/// From the color camera.
 	///
