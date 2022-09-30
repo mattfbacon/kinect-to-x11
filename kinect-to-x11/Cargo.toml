@@ -4,9 +4,16 @@ name = "kinect-to-x11"
 version = "0.1.0"
 
 [dependencies]
+az = "1"
+bytemuck = { version = "1", features = [
+	"min_const_generics",
+	"derive",
+	"extern_crate_alloc",
+] }
+ctrlc = "3"
+coolor = "0.5"
 freenect2 = { path = "../freenect2" }
+glam = "0.21"
+image = "0.24"
 log = "0.4"
 simplelog = "0.12"
-ctrlc = "3"
-image = "0.24"
-coolor = "0.5"

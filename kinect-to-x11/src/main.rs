@@ -18,142 +18,148 @@
 #![allow(clippy::let_underscore_drop)]
 #![forbid(unsafe_code)]
 
-use freenect2::{Context, Frame, FrameFormat, FrameType};
+use bytemuck::zeroed_box;
+use freenect2::{Context, Device, FrameFormat, FrameType};
 
-#[derive(Debug)]
-enum Message {
-	Frame(Frame, FrameType),
-	Stop,
-}
+mod transformer;
+use self::transformer::Transformer;
 
-fn main() {
+fn init_logging() {
 	simplelog::TermLogger::init(
-		log::LevelFilter::Info,
-		simplelog::Config::default(),
+		log::LevelFilter::Trace,
+		simplelog::ConfigBuilder::new()
+			.add_filter_allow_str("kinect_to_x11")
+			.build(),
 		simplelog::TerminalMode::Stderr,
 		simplelog::ColorChoice::Auto,
 	)
 	.unwrap();
+}
+
+fn main() {
+	init_logging();
 
 	let mut ctx = Context::new();
-	if let Some(mut device) = ctx.open_default_device() {
-		println!("opened device");
+	if let Some(device) = ctx.open_default_device() {
+		log::info!("opened device");
 
-		let (sender, recv) = std::sync::mpsc::sync_channel(4);
-
-		println!("setting frame listener");
-		device.set_frame_listener({
-			let sender = sender.clone();
-			move |frame, ty| {
-				println!("frame listener got frame");
-				let _ = sender.try_send(Message::Frame(frame, ty));
-			}
-		});
-
-		println!("setting ctrl-c handler");
-		ctrlc::set_handler({
-			let sender = sender.clone();
-			move || {
-				println!("received ctrl-c, sending stop message");
-				sender.send(Message::Stop).unwrap();
-			}
-		})
-		.unwrap();
-
-		println!("starting device");
-		device.start().unwrap();
-
-		let mut color_thread = None;
-		let mut depth_thread = None;
-
-		println!("starting frame loop");
-		while let Ok(message) = recv.recv() {
-			println!("receiver got message");
-			match message {
-				Message::Frame(mut frame, ty) => {
-					println!("message is a frame");
-
-					if ty == FrameType::Color && color_thread.is_none() {
-						println!("frame is color");
-
-						if frame.format() == FrameFormat::Bgrx {
-							println!("bgrx! transforming.");
-							for rgbx in frame.data_mut().chunks_exact_mut(4) {
-								rgbx.swap(0, 2);
-							}
-						}
-
-						let image = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
-							frame.width().try_into().unwrap(),
-							frame.height().try_into().unwrap(),
-							frame.into_data(),
-						)
-						.unwrap();
-						color_thread = Some(std::thread::spawn(move || {
-							image
-								.save_with_format("color.png", image::ImageFormat::Png)
-								.unwrap();
-							println!("done saving");
-						}));
-					} else if ty == FrameType::Depth && depth_thread.is_none() {
-						println!(
-							"frame is depth, width={:?}, height={:?}, format={:?}",
-							frame.width(),
-							frame.height(),
-							frame.format()
-						);
-
-						debug_assert_eq!(frame.bytes_per_pixel(), 4);
-						debug_assert_eq!(frame.format(), FrameFormat::Float);
-
-						let width = frame.width().try_into().unwrap();
-						let data = frame.data();
-						let image =
-							image::ImageBuffer::from_fn(width, frame.height().try_into().unwrap(), |x, y| {
-								const MAX: f32 = 4000.0; // 4 meters, conservative maximum
-
-								let idx = y * width + x;
-								let distance = f32::from_ne_bytes(
-									data[usize::try_from(idx).unwrap() * 4..][..4]
-										.try_into()
-										.unwrap(),
-								);
-								let proportion = distance / MAX;
-								let hsl = coolor::Hsl {
-									h: (1.0 - proportion) * 240.0,
-									s: 1.0,
-									l: 0.5,
-								};
-								let coolor::Rgb { r, g, b } = hsl.to_rgb();
-								image::Rgb([r, g, b])
-							});
-
-						depth_thread = Some(std::thread::spawn(move || {
-							image
-								.save_with_format("depth.png", image::ImageFormat::Png)
-								.unwrap();
-							println!("done saving");
-						}));
-					}
-
-					if color_thread.is_some() && depth_thread.is_some() {
-						break;
-					}
-				}
-				Message::Stop => {
-					println!("message is Stop");
-					break;
-				}
-			}
-		}
-		println!("frame loop finished");
-
-		println!("stopping device");
-		device.stop().unwrap();
-
-		color_thread.unwrap().join().unwrap();
-		depth_thread.unwrap().join().unwrap();
+		run(device);
 	} else {
 		log::error!("no devices available");
 	}
+}
+
+fn run(mut device: Device) {
+	let (sender, recv) = std::sync::mpsc::sync_channel(4);
+
+	log::debug!("setting frame listener");
+	device.set_frame_listener(move |frame, ty| {
+		log::debug!("frame listener got frame");
+		let _ = sender.try_send((frame, ty));
+	});
+
+	log::info!("starting device");
+	device.start().unwrap();
+
+	let transformer = Transformer::for_device(&device);
+
+	let mut color_thread = None;
+	let mut depth_threads = None;
+
+	log::debug!("starting frame loop");
+	while let Ok((mut frame, ty)) = recv.recv() {
+		log::debug!("receiver got message");
+		log::debug!("message is a frame");
+
+		match ty {
+			FrameType::Color => {
+				assert_eq!(frame.width(), 1920);
+				assert_eq!(frame.height(), 1080);
+				assert_eq!(frame.bytes_per_pixel(), 4);
+
+				match frame.format() {
+					FrameFormat::Rgbx => (),
+					FrameFormat::Bgrx => {
+						for rgbx in frame.data_mut().chunks_exact_mut(4) {
+							rgbx.swap(0, 2);
+						}
+					}
+					_ => unreachable!(),
+				}
+
+				if color_thread.is_none() {
+					color_thread = Some(std::thread::spawn(move || {
+						let mut image =
+							image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(1920, 1080, frame.into_data())
+								.unwrap();
+						image::imageops::flip_vertical_in_place(&mut image);
+						image.save("color.png").unwrap();
+					}));
+				}
+			}
+			FrameType::Depth => {
+				assert_eq!(frame.width(), 512);
+				assert_eq!(frame.height(), 424);
+				assert_eq!(frame.bytes_per_pixel(), 4);
+				assert_eq!(frame.format(), FrameFormat::Float);
+
+				let raw_depth: &[f32] = bytemuck::cast_slice(frame.data());
+				let mut depth_frame = zeroed_box::<[f32; 1920 * 1080]>();
+				transformer.depth_to_color(raw_depth, &mut *depth_frame);
+				let raw_depth = frame.into_data();
+
+				if depth_threads.is_none() {
+					depth_threads = Some((
+						std::thread::spawn(move || {
+							let image = image::ImageBuffer::from_fn(512, 424, |x, y| {
+								let depth = f32::from_ne_bytes(
+									raw_depth[az::cast::<_, usize>(y * 512 + x) * 4..][..4]
+										.try_into()
+										.unwrap(),
+								);
+								let proportion = depth / 4000.0;
+								let coolor::Rgb { r, g, b } = coolor::Hsl {
+									h: proportion * 240.0,
+									s: 1.0,
+									l: 0.5,
+								}
+								.to_rgb();
+								image::Rgb([r, g, b])
+							});
+							image.save("depth-distorted.png").unwrap();
+						}),
+						std::thread::spawn(move || {
+							let image = image::ImageBuffer::from_fn(1920, 1080, |x, y| {
+								let depth = depth_frame[az::cast::<_, usize>(y * 1920 + x)];
+								let proportion = depth / 4000.0;
+								let coolor::Rgb { r, g, b } = coolor::Hsl {
+									h: proportion * 240.0,
+									s: 1.0,
+									l: 0.5,
+								}
+								.to_rgb();
+								image::Rgb([r, g, b])
+							});
+							image.save("depth.png").unwrap();
+						}),
+					));
+				}
+			}
+			FrameType::Ir => (),
+		}
+
+		if color_thread.is_some() && depth_threads.is_some() {
+			break;
+		}
+	}
+	log::info!("frame loop finished");
+
+	log::info!("stopping device");
+	device.stop().unwrap();
+
+	log::info!("waiting for threads");
+	color_thread.unwrap().join().unwrap();
+	let depth_threads = depth_threads.unwrap();
+	depth_threads.0.join().unwrap();
+	depth_threads.1.join().unwrap();
 }
